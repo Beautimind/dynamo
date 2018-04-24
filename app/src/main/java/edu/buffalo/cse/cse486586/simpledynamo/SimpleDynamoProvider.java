@@ -1,19 +1,69 @@
 package edu.buffalo.cse.cse486586.simpledynamo;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.OutputStream;
+import java.io.Serializable;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.UnknownHostException;
+import java.security.Key;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.AbstractQueue;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Formatter;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.database.Cursor;
+import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.AsyncTask;
+import android.telephony.TelephonyManager;
+import android.util.Log;
+
+import junit.runner.Version;
 
 public class SimpleDynamoProvider extends ContentProvider {
 
+	//variable needed
+	private ArrayList<Node> Nodes;
+	private Node self;
+	static final String TAG = "SDActivity";
+	//The storage to store data
+	SharedPreferences data;
+	SharedPreferences fail_recovery;
+	private static ArrayBlockingQueue<Socket> Pendings=new ArrayBlockingQueue<Socket>(5);
+
+	private int max=0;
 	@Override
 	public int delete(Uri uri, String selection, String[] selectionArgs) {
 		// TODO Auto-generated method stub
+		Node successor=findSuccessor(selection,Nodes);
+		if(!successor.isFailed())
+		{
+			Object reply=Send_Receive(new Request(selection,null,"D"),
+					Integer.parseInt(successor.getEmulator())*2);
+			Log.d(TAG, "delete: "+selection+" finished");
+			if(!(reply instanceof Reply))
+			{
+				successor.setFailed(true);
+			}
+		}
+		if(successor.isFailed())
+		{
+			//handle failure here
+		}
 		return 0;
 	}
 
@@ -25,23 +75,131 @@ public class SimpleDynamoProvider extends ContentProvider {
 
 	@Override
 	public Uri insert(Uri uri, ContentValues values) {
-		// TODO Auto-generated method stub
+		String key=values.getAsString("key");
+		String value=values.getAsString("value");
+		Log.d(TAG, "insert: "+key+" begin");
+		Node successor=findSuccessor(key,Nodes);
+		if(!successor.isFailed())
+		{
+			Object reply=Send_Receive(new Request(key,value,"I"),
+					Integer.parseInt(successor.getEmulator())*2);
+			if(!(reply instanceof Reply))
+			{
+				successor.setFailed(true);
+			}
+			if(((Reply)reply).Success())
+			{
+				Log.d(TAG, "insert: "+key+" finished\n");
+			}
+		}
+		if(successor.isFailed())
+		{
+			//handle failure
+		}
 		return null;
 	}
 
 	@Override
 	public boolean onCreate() {
 		// TODO Auto-generated method stub
+		//test
+		TelephonyManager tel = (TelephonyManager) this.getContext().getSystemService(Context.TELEPHONY_SERVICE);
+		String myPortString = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
+		Nodes=new ArrayList<Node>();
+		data=getContext().getSharedPreferences("data",0);
+		//do some initialization;
+		for(int i=5554;i<=5562;i=i+2)
+		{
+			Nodes.add(new Node(Integer.toString(i)));
+		}
+
+		for(Node i:Nodes)
+		{
+			if(i.getEmulator().compareTo(myPortString)==0)
+				self=i;
+		}
+		Collections.sort(Nodes);
+
+		int i;
+		for(i=0;i<Nodes.size()-2;i++)
+		{
+			Nodes.get(i).setReplica(Nodes.get(i+1),Nodes.get(i+2));
+			Nodes.get(i+2).setCoordinator(Nodes.get(i));
+		}
+
+		//set replica of last two Nodes;
+		Nodes.get(i).setReplica(Nodes.get(i+1),Nodes.get(0));
+		Nodes.get(0).setCoordinator(Nodes.get(i));
+		Nodes.get(i+1).setReplica(Nodes.get(0),Nodes.get(1));
+		Nodes.get(1).setCoordinator(Nodes.get(i+1));
+		try {
+			ServerSocket serverSocket = new ServerSocket(10000);
+			new ServerTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, serverSocket);
+		} catch (IOException e) {
+			Log.e(TAG, "Can't create a ServerSocket");
+			//e.printStackTrace();
+			return false;
+		}
+		Log.d(TAG, "onCreate: finished ----------------------------------\n");
+		Log.d(TAG, "onCreate: Self is "+self.getEmulator());
 		return false;
 	}
 
 	@Override
 	public Cursor query(Uri uri, String[] projection, String selection,
 			String[] selectionArgs, String sortOrder) {
-		// TODO Auto-generated method stub
-		return null;
+
+		String[] columns = new String[] { "key", "value" };
+		MatrixCursor result = new MatrixCursor(columns);
+		if(selection.equals("@")) {
+			ArrayList<Reply> replies=(ArrayList<Reply>)queryDynamo(self.getCoordinator(),selection);
+			//Log.d(TAG, "query: "+selection+" finished");
+			for(Reply R:replies)
+			{
+				result.addRow(new Object[]{R.getKey(),R.getValue()});
+				//Log.d(TAG, "query: get "+ R.getKey());
+			}
+		}
+		else if(selection.equals("*")){
+			for(Node N:Nodes)
+			{
+				ArrayList<Reply> replies=(ArrayList<Reply>)queryDynamo(N.coordinator,selection);
+				//Log.d(TAG, "query: "+selection+" finished");
+				for(Reply R:replies)
+				{
+					result.addRow(new Object[]{R.getKey(),R.getValue()});
+				}
+			}
+		}
+		else {
+			Node successor=findSuccessor(selection,Nodes);
+			Reply reply=(Reply)queryDynamo(successor,selection);
+			Log.d(TAG, "query: "+selection+" finished");
+			result.addRow(new Object[]{reply.getKey(),reply.getValue()});
+		}
+		return result;
 	}
 
+	Object queryDynamo(Node successor,String selection)
+	{
+		Object result=null;
+		if(!successor.replica2.isFailed()) {
+			Object reply = Send_Receive(new Request(selection, null, "Q"),
+					Integer.parseInt(successor.getReplica2().getEmulator()) * 2);
+			if (!(reply instanceof Object)) {
+				successor.replica2.setFailed(true);
+			}else
+			{
+				result=reply;
+			}
+		}
+		if(successor.replica2.isFailed())
+		{
+			result=Send_Receive(new Request(selection,null,"Q"),
+					Integer.parseInt(successor.getReplica1().getEmulator())*2);
+		}
+		return result;
+	}
 	@Override
 	public int update(Uri uri, ContentValues values, String selection,
 			String[] selectionArgs) {
@@ -49,7 +207,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		return 0;
 	}
 
-    private String genHash(String input) throws NoSuchAlgorithmException {
+    static public String genHash(String input) throws NoSuchAlgorithmException {
         MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
         byte[] sha1Hash = sha1.digest(input.getBytes());
         Formatter formatter = new Formatter();
@@ -58,4 +216,286 @@ public class SimpleDynamoProvider extends ContentProvider {
         }
         return formatter.toString();
     }
+
+    //function to locally routing
+	static public Node findSuccessor(String key,ArrayList<Node> Nodes)
+	{
+		String hash=null;
+		try {
+			 hash = genHash(key);
+		}catch (NoSuchAlgorithmException e)
+		{
+			e.printStackTrace();
+		}
+		for(Node i:Nodes)
+		{
+			if(i.getHash().compareTo(hash)>=0)
+			{
+				//Log.d(TAG, "findSuccessor: "+hash+" < "+i.getHash());
+				return i;
+			}
+		}
+		//Log.d(TAG, "findSuccessor: "+hash+" < "+Nodes.get(0).getHash());
+		return Nodes.get(0);
+	}
+
+    //need added class to store all member information of group
+
+	//represent a single Node
+    static class Node implements Comparable<Node>
+	{
+		private String Hash;
+		private String Emulator;
+		private Node replica1;
+		private Node replica2;
+		private boolean failed;
+		private Node coordinator;
+		public Node(String Emulator)
+		{
+			this.Emulator=Emulator;
+			try {
+				this.Hash = genHash(Emulator);
+			}catch (NoSuchAlgorithmException e)
+			{
+				e.printStackTrace();
+			}
+			failed=false;
+		}
+
+		public String getHash()
+		{
+			return this.Hash;
+		}
+
+		public String getEmulator()
+		{
+			return this.Emulator;
+		}
+
+		public void setReplica(Node replica1,Node replica2)
+		{
+			this.replica1=replica1;
+			this.replica2=replica2;
+		}
+
+		public void setCoordinator(Node coordinator)
+		{
+			this.coordinator=coordinator;
+		}
+		public Node getCoordinator()
+		{
+			return this.coordinator;
+		}
+		public Node getReplica1()
+		{
+			return replica1;
+		}
+
+		public Node getReplica2()
+		{
+			return replica2;
+		}
+
+		public boolean isFailed()
+		{
+			return failed;
+		}
+		public void setFailed(boolean failed)
+		{
+			this.failed=failed;
+		}
+		@Override
+		public int compareTo(Node another) {
+			return this.Hash.compareTo(another.Hash);
+		}
+	}
+
+	private static class Request implements Serializable
+	{
+		private String Key=null;
+		private String Value=null;
+		private String Flag=null;
+		public Request(String key,String Value,String Flag)
+		{
+			this.Key=key;
+			this.Value=Value;
+			this.Flag=Flag;
+		}
+
+		public String getKey()
+		{return Key;}
+
+		public String getFlag()
+		{return Flag;}
+
+		public String getValue()
+		{return Value;}
+	}
+
+	private static class Reply implements Serializable
+	{
+		private String Key=null;
+		private String Value=null;
+		private boolean Success=false;
+		public Reply(String key,String Value,boolean Success)
+		{
+			this.Key=key;
+			this.Value=Value;
+			this.Success=Success;
+		}
+
+		public String getKey()
+		{return Key;}
+
+		public boolean Success()
+		{return Success;}
+
+		public String getValue()
+		{return Value;}
+	}
+
+	private class ServerTask extends AsyncTask<ServerSocket, String, Void> {
+
+		@Override
+		protected Void doInBackground(ServerSocket... sockets) {
+			ServerSocket serverSocket = sockets[0];
+			SharedPreferences.Editor editor=data.edit();
+            /*
+             * TODO: Fill in your server code that receives messages and passes them
+             * to onProgressUpdate().
+             */
+            try {
+				while (true) {
+					Request msg;
+					Socket clientSocket = serverSocket.accept();
+					ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream());
+					msg=(Request) in.readObject();
+					String flag=msg.getFlag();
+					String key=msg.getKey();
+					if(flag.equals("Q"))
+					{
+						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+						if(key.equals("*")||key.equals("@")) {
+							//Log.d(TAG, "doInBackground: recieve query");
+							ArrayList<Reply> replies=new ArrayList<Reply>();
+							Map<String,String> all=(Map<String, String>) data.getAll();
+							for(Map.Entry<String,String> E:all.entrySet())
+							{
+								replies.add(new Reply(E.getKey(),E.getValue(),true));
+								//Log.d(TAG, "doInBackground: have "+E.getKey());
+							}
+							out.writeObject(replies);
+						}else {
+							out.writeObject(new Reply(key, data.getString(key, null), true));
+							out.close();
+							clientSocket.close();
+						}
+					}
+					else if(flag.equals("I"))
+					{
+						//Log.d(TAG, "doInBackground: insert head "+key);
+						editor.putString(key,msg.getValue());
+						editor.commit();
+						Send(new Request(key,msg.getValue(),"IM"),
+								Integer.parseInt(self.getReplica1().getEmulator())*2);
+						Pendings.add(clientSocket);
+					}
+					else if(flag.equals("IM"))
+					{
+						//Log.d(TAG, "doInBackground: Insert middle "+key);
+						editor.putString(key,msg.getValue());
+						editor.commit();
+						Send(new Request(key,msg.getValue(),"IT"),
+								Integer.parseInt(self.getReplica1().getEmulator())*2);
+					}
+					else if(flag.equals("IT"))
+					{
+						//Log.d(TAG, "doInBackground: Insert tail "+key);
+						editor.putString(key,msg.getValue());
+						editor.commit();
+						Send(new Request(key,null,"OK"),
+								Integer.parseInt(self.getCoordinator().getEmulator())*2);
+					}
+					else if(flag.equals("OK"))
+					{
+						//Log.d(TAG, "doInBackground: "+"insert finished for "+key);
+						Socket toReply=Pendings.poll();
+						ObjectOutputStream out=new ObjectOutputStream(toReply.getOutputStream());
+						out.writeObject(new Reply(null,null,true));
+						out.close();
+						toReply.close();
+					}
+					else if(flag.equals("D"))
+					{
+						if(key.equals("*")||key.equals("@")) {
+							editor.clear();
+							editor.commit();
+							ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+							out.writeObject(new Reply(null,null,true));
+						} else{
+							editor.remove(key);
+							editor.commit();
+							Send(new Request(key,null,"DM"),
+									Integer.parseInt(self.getReplica1().getEmulator())*2);
+							Pendings.add(clientSocket);
+						}
+					}
+					else if(flag.equals("DM")){
+						editor.remove(key);
+						editor.commit();
+						Send(new Request(key,null,"DT"),
+								Integer.parseInt(self.getReplica1().getEmulator())*2);
+					}
+					else if(flag.equals("DT"))
+					{
+						editor.remove(key);
+						editor.commit();
+						Send(new Request(null,null,"OK"),
+								Integer.parseInt(self.getCoordinator().getEmulator())*2);
+					}
+				}
+			}catch (IOException e)
+			{
+				Log.e(TAG, "doInBackground: ",e );
+			}catch (ClassNotFoundException e)
+			{
+				Log.e(TAG, "doInBackground: ",e );
+			}
+			return null;
+		}
+	}
+
+	public Object Send_Receive(Request m,int port)
+	{
+		Object result=null;
+		try {
+			Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), port);
+			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+			out.writeObject(m);
+			out.flush();
+			ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+			result = in.readObject();
+			in.close();
+			out.close();
+			socket.close();
+		} catch (Exception e)
+		{
+			Log.e(TAG, "Send_Receive: ",e );
+			return result;
+		}
+		return result;
+	}
+	public void Send(Request m,int port)
+	{
+		try {
+			Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), port);
+			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+			out.writeObject(m);
+			out.close();
+			socket.close();
+		}catch (Exception e)
+		{
+			Log.e(TAG, "Send: ",e );
+		}
+	}
 }
