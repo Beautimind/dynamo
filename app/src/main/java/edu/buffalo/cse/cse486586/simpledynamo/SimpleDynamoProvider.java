@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Formatter;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 
@@ -43,7 +44,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 	//The storage to store data
 	SharedPreferences data;
 	SharedPreferences fail_recovery;
-	private static ArrayBlockingQueue<Socket> Pendings=new ArrayBlockingQueue<Socket>(5);
+	private static LinkedList<Socket> Pendings=new LinkedList<Socket>();
 
 	private int max=0;
 	@Override
@@ -152,22 +153,30 @@ public class SimpleDynamoProvider extends ContentProvider {
 		String[] columns = new String[] { "key", "value" };
 		MatrixCursor result = new MatrixCursor(columns);
 		if(selection.equals("@")) {
-			ArrayList<Reply> replies=(ArrayList<Reply>)queryDynamo(self.getCoordinator(),selection);
-			//Log.d(TAG, "query: "+selection+" finished");
-			for(Reply R:replies)
+			Map<String,String> all=(Map<String, String>) data.getAll();
+			for(Map.Entry<String,String> E:all.entrySet())
 			{
-				result.addRow(new Object[]{R.getKey(),R.getValue()});
-				//Log.d(TAG, "query: get "+ R.getKey());
+				result.addRow(new Object[]{E.getKey(),E.getValue()});
+				//Log.d(TAG, "doInBackground: have "+E.getKey());
 			}
 		}
 		else if(selection.equals("*")){
 			for(Node N:Nodes)
 			{
-				ArrayList<Reply> replies=(ArrayList<Reply>)queryDynamo(N.coordinator,selection);
-				//Log.d(TAG, "query: "+selection+" finished");
-				for(Reply R:replies)
+				if(!(N.equals(self))) {
+					ArrayList<Reply> replies = (ArrayList<Reply>) queryDynamo(N.coordinator, selection);
+					//Log.d(TAG, "query: "+selection+" finished");
+					for (Reply R : replies) {
+						result.addRow(new Object[]{R.getKey(), R.getValue()});
+					}
+				}else
 				{
-					result.addRow(new Object[]{R.getKey(),R.getValue()});
+					Map<String,String> all=(Map<String, String>) data.getAll();
+					for(Map.Entry<String,String> E:all.entrySet())
+					{
+						result.addRow(new Object[]{E.getKey(),E.getValue()});
+						//Log.d(TAG, "doInBackground: have "+E.getKey());
+					}
 				}
 			}
 		}
@@ -375,8 +384,13 @@ public class SimpleDynamoProvider extends ContentProvider {
 					if(flag.equals("Q"))
 					{
 						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
-						if(key.equals("*")||key.equals("@")) {
+						if(!key.equals("*")) {
 							//Log.d(TAG, "doInBackground: recieve query");
+							out.writeObject(new Reply(key, data.getString(key, null), true));
+							out.close();
+							clientSocket.close();
+						}else {
+							//handle *
 							ArrayList<Reply> replies=new ArrayList<Reply>();
 							Map<String,String> all=(Map<String, String>) data.getAll();
 							for(Map.Entry<String,String> E:all.entrySet())
@@ -385,15 +399,12 @@ public class SimpleDynamoProvider extends ContentProvider {
 								//Log.d(TAG, "doInBackground: have "+E.getKey());
 							}
 							out.writeObject(replies);
-						}else {
-							out.writeObject(new Reply(key, data.getString(key, null), true));
-							out.close();
-							clientSocket.close();
 						}
 					}
 					else if(flag.equals("I"))
 					{
-						//Log.d(TAG, "doInBackground: insert head "+key);
+						Log.d(TAG, "doInBackground: Insert head "+key);
+						Log.d(TAG, "doInBackground: The size of Pending queue before adding is "+Pendings.size());
 						editor.putString(key,msg.getValue());
 						editor.commit();
 						Send(new Request(key,msg.getValue(),"IM"),
@@ -410,7 +421,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag.equals("IT"))
 					{
-						//Log.d(TAG, "doInBackground: Insert tail "+key);
+						Log.d(TAG, "doInBackground: Insert tail "+key);
 						editor.putString(key,msg.getValue());
 						editor.commit();
 						Send(new Request(key,null,"OK"),
@@ -418,7 +429,6 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag.equals("OK"))
 					{
-						//Log.d(TAG, "doInBackground: "+"insert finished for "+key);
 						Socket toReply=Pendings.poll();
 						ObjectOutputStream out=new ObjectOutputStream(toReply.getOutputStream());
 						out.writeObject(new Reply(null,null,true));
@@ -427,18 +437,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag.equals("D"))
 					{
-						if(key.equals("*")||key.equals("@")) {
-							editor.clear();
-							editor.commit();
-							ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
-							out.writeObject(new Reply(null,null,true));
-						} else{
-							editor.remove(key);
-							editor.commit();
-							Send(new Request(key,null,"DM"),
-									Integer.parseInt(self.getReplica1().getEmulator())*2);
-							Pendings.add(clientSocket);
-						}
+						editor.remove(key);
+						editor.commit();
+						Send(new Request(key,null,"DM"),
+								Integer.parseInt(self.getReplica1().getEmulator())*2);
+						Pendings.add(clientSocket);
 					}
 					else if(flag.equals("DM")){
 						editor.remove(key);
@@ -470,9 +473,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 		Object result=null;
 		try {
 			Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), port);
+			//socket.setSoTimeout(10000);
 			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
 			out.writeObject(m);
 			out.flush();
+			//socket.setSoTimeout(10*1000);
 			ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 			result = in.readObject();
 			in.close();
