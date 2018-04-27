@@ -45,6 +45,8 @@ public class SimpleDynamoProvider extends ContentProvider {
 	//The storage to store data
 	SharedPreferences data;
 	SharedPreferences fail_recovery;
+	SharedPreferences back_up;
+	private boolean nofail;
 	private static LinkedList<Socket> Pendings=new LinkedList<Socket>();
 	private int max=0;
 	//all flag
@@ -162,6 +164,8 @@ public class SimpleDynamoProvider extends ContentProvider {
 		Nodes=new ArrayList<Node>();
 		data=getContext().getSharedPreferences("data",0);
 		fail_recovery=getContext().getSharedPreferences("fail",0);
+		back_up=getContext().getSharedPreferences("backup",0);
+		nofail=true;
 		//do some initialization;
 		for(int i=5554;i<=5562;i=i+2)
 		{
@@ -468,13 +472,19 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag==I)
 					{
-						Log.d(TAG, "doInBackground: Insert head "+key);
-						Log.d(TAG, "doInBackground: The size of Pending queue before adding is "+Pendings.size());
-						editor.putString(key,msg.Value);
-						editor.commit();
-						Send(new Request(key,msg.Value,IM),
-								Integer.parseInt(self.getReplica1().getEmulator())*2);
-						Pendings.add(clientSocket);
+						if(!self.getReplica1().isFailed()&&!self.getReplica2().isFailed()) {
+							Log.d(TAG, "doInBackground: Insert head " + key);
+							Log.d(TAG, "doInBackground: The size of Pending queue before adding is " + Pendings.size());
+							editor.putString(key, msg.Value);
+							editor.commit();
+							Send(new Request(key, msg.Value, IM),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							Pendings.add(clientSocket);
+						}
+						else if(self.getReplica1().isFailed())
+						{}
+						else
+						{}
 					}
 					else if(flag==IM)
 					{
@@ -502,11 +512,16 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag==D)
 					{
-						editor.remove(key);
-						editor.commit();
-						Send(new Request(key,null,DM),
-								Integer.parseInt(self.getReplica1().getEmulator())*2);
-						Pendings.add(clientSocket);
+						if(!self.getReplica1().isFailed()&&!self.getReplica2().isFailed()) {
+							editor.remove(key);
+							editor.commit();
+							Send(new Request(key, null, DM),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							Pendings.add(clientSocket);
+						}else if(self.getReplica2().isFailed())
+						{}
+						else
+						{}
 					}
 					else if(flag==DM){
 						editor.remove(key);
@@ -568,7 +583,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
 			out.writeObject(m);
 			out.flush();
-			socket.setSoTimeout(1000);
+			//socket.setSoTimeout(1000);
 			ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 			result = in.readObject();
 			in.close();
