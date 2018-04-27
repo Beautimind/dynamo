@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -45,25 +46,60 @@ public class SimpleDynamoProvider extends ContentProvider {
 	SharedPreferences data;
 	SharedPreferences fail_recovery;
 	private static LinkedList<Socket> Pendings=new LinkedList<Socket>();
-
 	private int max=0;
+	//all flag
+	private final int Q=0;
+	private final int I=1;
+	private final int IM=2;
+	private final int IT=3;
+	private final int D=4;
+	private final int DM=5;
+	private final int DT=6;
+	private final int OK=7;
+	private final int FQ=8;
+	private final int FI=9;
+	private final int FIM=10;
+	private final int FIT=11;
+	private final int FD=12;
+	private final int FDM=13;
+	private final int FDT=14;
+	private final int FOK=15;
+	private final int RT=16;
+	private final int RM=17;
+	private final int RH=18;
+	private final int F=19;
+	private final int FR=20;
 	@Override
 	public int delete(Uri uri, String selection, String[] selectionArgs) {
 		// TODO Auto-generated method stub
 		Node successor=findSuccessor(selection,Nodes);
 		if(!successor.isFailed())
 		{
-			Object reply=Send_Receive(new Request(selection,null,"D"),
+			Object reply=Send_Receive(new Request(selection,null,D),
 					Integer.parseInt(successor.getEmulator())*2);
 			Log.d(TAG, "delete: "+selection+" finished");
 			if(!(reply instanceof Reply))
 			{
-				successor.setFailed(true);
+				reply=Send_Receive(new Request(null,null,F),Integer.parseInt(successor.getEmulator())*2);
+				if(reply instanceof Reply)
+				{
+					Send_Receive(new Request(selection,null,D),Integer.parseInt(successor.getEmulator())*2);
+				}else
+				{
+					successor.isFailed();
+				}
 			}
 		}
 		if(successor.isFailed())
 		{
 			//handle failure here
+			Object reply=Send_Receive(new Request(selection,null,D),Integer.parseInt(successor.getEmulator())*2);
+			if(reply instanceof Reply&&!((Reply) reply).Success)
+			{
+				successor.setFailed(false);
+				Send_Receive(new Request(selection,null,D),
+						Integer.parseInt(successor.getEmulator())*2);
+			}
 		}
 		return 0;
 	}
@@ -82,13 +118,22 @@ public class SimpleDynamoProvider extends ContentProvider {
 		Node successor=findSuccessor(key,Nodes);
 		if(!successor.isFailed())
 		{
-			Object reply=Send_Receive(new Request(key,value,"I"),
+			Object reply=Send_Receive(new Request(key,value,I),
 					Integer.parseInt(successor.getEmulator())*2);
 			if(!(reply instanceof Reply))
 			{
-				successor.setFailed(true);
+				reply=Send_Receive(new Request(null,null,F),
+						Integer.parseInt(successor.getEmulator())*2);
+				if(reply instanceof Reply)
+				{
+					reply=Send_Receive(new Request(key,value,I),
+							Integer.parseInt(successor.getEmulator())*2);
+				}else
+				{
+					successor.setFailed(true);
+				}
 			}
-			if(((Reply)reply).Success())
+			if(((Reply)reply).Success)
 			{
 				Log.d(TAG, "insert: "+key+" finished\n");
 			}
@@ -96,6 +141,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 		if(successor.isFailed())
 		{
 			//handle failure
+			Object reply=Send_Receive(new Request(key,value,I),
+					Integer.parseInt(successor.getReplica1().getEmulator())*2);
+			if(reply instanceof Reply&&!((Reply) reply).Success)
+			{
+				successor.setFailed(false);
+				reply=Send_Receive(new Request(key,value,I),
+						Integer.parseInt(successor.getEmulator())*2);
+			}
 		}
 		return null;
 	}
@@ -108,6 +161,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		String myPortString = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
 		Nodes=new ArrayList<Node>();
 		data=getContext().getSharedPreferences("data",0);
+		fail_recovery=getContext().getSharedPreferences("fail",0);
 		//do some initialization;
 		for(int i=5554;i<=5562;i=i+2)
 		{
@@ -167,7 +221,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 					ArrayList<Reply> replies = (ArrayList<Reply>) queryDynamo(N.coordinator, selection);
 					//Log.d(TAG, "query: "+selection+" finished");
 					for (Reply R : replies) {
-						result.addRow(new Object[]{R.getKey(), R.getValue()});
+						result.addRow(new Object[]{R.Key, R.Value});
 					}
 				}else
 				{
@@ -184,7 +238,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			Node successor=findSuccessor(selection,Nodes);
 			Reply reply=(Reply)queryDynamo(successor,selection);
 			Log.d(TAG, "query: "+selection+" finished");
-			result.addRow(new Object[]{reply.getKey(),reply.getValue()});
+			result.addRow(new Object[]{reply.Key,reply.Value});
 		}
 		return result;
 	}
@@ -193,7 +247,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 	{
 		Object result=null;
 		if(!successor.replica2.isFailed()) {
-			Object reply = Send_Receive(new Request(selection, null, "Q"),
+			Object reply = Send_Receive(new Request(selection, null, Q),
 					Integer.parseInt(successor.getReplica2().getEmulator()) * 2);
 			if (!(reply instanceof Object)) {
 				successor.replica2.setFailed(true);
@@ -204,7 +258,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		}
 		if(successor.replica2.isFailed())
 		{
-			result=Send_Receive(new Request(selection,null,"Q"),
+			result=Send_Receive(new Request(selection,null,Q),
 					Integer.parseInt(successor.getReplica1().getEmulator())*2);
 		}
 		return result;
@@ -257,7 +311,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		private String Emulator;
 		private Node replica1;
 		private Node replica2;
-		private boolean failed;
+		private AtomicBoolean failed;
 		private Node coordinator;
 		public Node(String Emulator)
 		{
@@ -268,7 +322,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			{
 				e.printStackTrace();
 			}
-			failed=false;
+			failed=new AtomicBoolean(false);
 		}
 
 		public String getHash()
@@ -307,11 +361,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 
 		public boolean isFailed()
 		{
-			return failed;
+			return failed.get();
 		}
 		public void setFailed(boolean failed)
 		{
-			this.failed=failed;
+			this.failed.compareAndSet(!failed,failed);
 		}
 		@Override
 		public int compareTo(Node another) {
@@ -321,31 +375,23 @@ public class SimpleDynamoProvider extends ContentProvider {
 
 	private static class Request implements Serializable
 	{
-		private String Key=null;
-		private String Value=null;
-		private String Flag=null;
-		public Request(String key,String Value,String Flag)
+		public String Key=null;
+		public String Value=null;
+		public int Flag=0;
+		public Request(String key,String Value,int Flag)
 		{
 			this.Key=key;
 			this.Value=Value;
 			this.Flag=Flag;
 		}
 
-		public String getKey()
-		{return Key;}
-
-		public String getFlag()
-		{return Flag;}
-
-		public String getValue()
-		{return Value;}
 	}
 
 	private static class Reply implements Serializable
 	{
-		private String Key=null;
-		private String Value=null;
-		private boolean Success=false;
+		public String Key=null;
+		public String Value=null;
+		public boolean Success=false;
 		public Reply(String key,String Value,boolean Success)
 		{
 			this.Key=key;
@@ -353,14 +399,6 @@ public class SimpleDynamoProvider extends ContentProvider {
 			this.Success=Success;
 		}
 
-		public String getKey()
-		{return Key;}
-
-		public boolean Success()
-		{return Success;}
-
-		public String getValue()
-		{return Value;}
 	}
 
 	private class ServerTask extends AsyncTask<ServerSocket, String, Void> {
@@ -369,6 +407,33 @@ public class SimpleDynamoProvider extends ContentProvider {
 		protected Void doInBackground(ServerSocket... sockets) {
 			ServerSocket serverSocket = sockets[0];
 			SharedPreferences.Editor editor=data.edit();
+			if(fail_recovery.contains("fail"))
+			{
+				editor.clear();
+				ArrayList<Reply> data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RT),
+						Integer.parseInt(self.getCoordinator().getEmulator())*2);
+				for(Reply R:data)
+				{
+					editor.putString(R.Key,R.Value);
+				}
+				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RM),
+						Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
+				for(Reply R:data)
+				{
+					editor.putString(R.Key,R.Value);
+				}
+				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RH),
+						Integer.parseInt(self.getReplica1().getEmulator())*2);
+				for(Reply R:data)
+				{
+					editor.putString(R.Key,R.Value);
+				}
+			}else {
+				SharedPreferences.Editor temp=fail_recovery.edit();
+				temp.putString("fail","");
+				temp.commit();
+				Log.d(TAG, "doInBackground: Begin-------------------");
+			}
             /*
              * TODO: Fill in your server code that receives messages and passes them
              * to onProgressUpdate().
@@ -379,9 +444,9 @@ public class SimpleDynamoProvider extends ContentProvider {
 					Socket clientSocket = serverSocket.accept();
 					ObjectInputStream in = new ObjectInputStream(clientSocket.getInputStream());
 					msg=(Request) in.readObject();
-					String flag=msg.getFlag();
-					String key=msg.getKey();
-					if(flag.equals("Q"))
+					int flag=msg.Flag;
+					String key=msg.Key;
+					if(flag==Q)
 					{
 						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
 						if(!key.equals("*")) {
@@ -401,33 +466,33 @@ public class SimpleDynamoProvider extends ContentProvider {
 							out.writeObject(replies);
 						}
 					}
-					else if(flag.equals("I"))
+					else if(flag==I)
 					{
 						Log.d(TAG, "doInBackground: Insert head "+key);
 						Log.d(TAG, "doInBackground: The size of Pending queue before adding is "+Pendings.size());
-						editor.putString(key,msg.getValue());
+						editor.putString(key,msg.Value);
 						editor.commit();
-						Send(new Request(key,msg.getValue(),"IM"),
+						Send(new Request(key,msg.Value,IM),
 								Integer.parseInt(self.getReplica1().getEmulator())*2);
 						Pendings.add(clientSocket);
 					}
-					else if(flag.equals("IM"))
+					else if(flag==IM)
 					{
 						//Log.d(TAG, "doInBackground: Insert middle "+key);
-						editor.putString(key,msg.getValue());
+						editor.putString(key,msg.Value);
 						editor.commit();
-						Send(new Request(key,msg.getValue(),"IT"),
+						Send(new Request(key,msg.Value,IT),
 								Integer.parseInt(self.getReplica1().getEmulator())*2);
 					}
-					else if(flag.equals("IT"))
+					else if(flag==IT)
 					{
 						Log.d(TAG, "doInBackground: Insert tail "+key);
-						editor.putString(key,msg.getValue());
+						editor.putString(key,msg.Value);
 						editor.commit();
-						Send(new Request(key,null,"OK"),
+						Send(new Request(key,null,OK),
 								Integer.parseInt(self.getCoordinator().getEmulator())*2);
 					}
-					else if(flag.equals("OK"))
+					else if(flag==OK)
 					{
 						Socket toReply=Pendings.poll();
 						ObjectOutputStream out=new ObjectOutputStream(toReply.getOutputStream());
@@ -435,27 +500,53 @@ public class SimpleDynamoProvider extends ContentProvider {
 						out.close();
 						toReply.close();
 					}
-					else if(flag.equals("D"))
+					else if(flag==D)
 					{
 						editor.remove(key);
 						editor.commit();
-						Send(new Request(key,null,"DM"),
+						Send(new Request(key,null,DM),
 								Integer.parseInt(self.getReplica1().getEmulator())*2);
 						Pendings.add(clientSocket);
 					}
-					else if(flag.equals("DM")){
+					else if(flag==DM){
 						editor.remove(key);
 						editor.commit();
-						Send(new Request(key,null,"DT"),
+						Send(new Request(key,null,DT),
 								Integer.parseInt(self.getReplica1().getEmulator())*2);
 					}
-					else if(flag.equals("DT"))
+					else if(flag==DT)
 					{
 						editor.remove(key);
 						editor.commit();
-						Send(new Request(null,null,"OK"),
+						Send(new Request(null,null,OK),
 								Integer.parseInt(self.getCoordinator().getEmulator())*2);
 					}
+					else if (flag==F)
+					{
+
+					}
+					else if(flag==FR)
+					{}
+					else if(flag==FI)
+					{}
+					else if(flag==FIM)
+					{}
+					else if(flag==FIT)
+					{}
+					else if(flag==FD)
+					{}
+					else if(flag==FDM)
+					{}
+					else if(flag==FDT)
+					{}
+					else if(flag==FOK)
+					{}
+					else if(flag==RH)
+					{}
+					else if(flag==RM)
+					{}
+					else if(flag==RT)
+					{}
 				}
 			}catch (IOException e)
 			{
@@ -477,7 +568,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
 			out.writeObject(m);
 			out.flush();
-			//socket.setSoTimeout(10*1000);
+			socket.setSoTimeout(1000);
 			ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 			result = in.readObject();
 			in.close();
