@@ -20,6 +20,7 @@ import java.util.Formatter;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -49,7 +50,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 	private boolean nofail=true;
 	private static LinkedList<Socket> Pendings=new LinkedList<Socket>();
 	private static LinkedList<Socket> failPendings=new LinkedList<Socket>();
-	private int max=0;
+	private int selfnum=0;
 	//all flag
 	private final int Q=0;
 	private final int I=1;
@@ -59,7 +60,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 	private final int DM=5;
 	private final int DT=6;
 	private final int OK=7;
-	private final int FQ=8;
+	private final int R=8;
 	private final int FI=9;
 	private final int FIM=10;
 	private final int FIT=11;
@@ -96,7 +97,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		if(successor.isFailed())
 		{
 			//handle failure here
-			Object reply=Send_Receive(new Request(selection,null,D),Integer.parseInt(successor.getEmulator())*2);
+			Object reply=Send_Receive(new Request(selection,null,FD),Integer.parseInt(successor.getEmulator())*2);
 			if(reply instanceof Reply&&!((Reply) reply).Success)
 			{
 				successor.setFailed(false);
@@ -144,7 +145,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		if(successor.isFailed())
 		{
 			//handle failure
-			Object reply=Send_Receive(new Request(key,value,I),
+			Object reply=Send_Receive(new Request(key,value,FI),
 					Integer.parseInt(successor.getReplica1().getEmulator())*2);
 			if(reply instanceof Reply&&!((Reply) reply).Success)
 			{
@@ -172,11 +173,15 @@ public class SimpleDynamoProvider extends ContentProvider {
 		{
 			Nodes.add(new Node(Integer.toString(i)));
 		}
-
+		selfnum=0;
 		for(Node i:Nodes)
 		{
 			if(i.getEmulator().compareTo(myPortString)==0)
+			{
 				self=i;
+				break;
+			}
+			selfnum++;
 		}
 		Collections.sort(Nodes);
 
@@ -416,24 +421,50 @@ public class SimpleDynamoProvider extends ContentProvider {
 			if(fail_recovery.contains("fail"))
 			{
 				editor.clear();
-				ArrayList<Reply> data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RT),
+				Set<Map.Entry<String,String>> data=(Set<Map.Entry<String,String>>) Send_Receive(new Request(null,null,RT),
 						Integer.parseInt(self.getCoordinator().getEmulator())*2);
-				for(Reply R:data)
+				for(Map.Entry<String,String> E:data)
 				{
-					editor.putString(R.Key,R.Value);
+					if(E.getValue().equals(""))
+					{
+						editor.remove(E.getKey());
+					}
+					else
+					{
+						editor.putString(E.getKey(),E.getValue());
+					}
 				}
-				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RM),
+				data=(Set<Map.Entry<String,String>>) Send_Receive(new Request(null,null,RM),
 						Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
-				for(Reply R:data)
+				for(Map.Entry<String,String> E:data)
 				{
-					editor.putString(R.Key,R.Value);
+					if(E.getValue().equals(""))
+					{
+						editor.remove(E.getKey());
+					}
+					else
+					{
+						editor.putString(E.getKey(),E.getValue());
+					}
 				}
-				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RH),
+				data=(Set<Map.Entry<String,String>>) Send_Receive(new Request(null,null,RH),
 						Integer.parseInt(self.getReplica1().getEmulator())*2);
-				for(Reply R:data)
+				for(Map.Entry<String,String> E:data)
 				{
-					editor.putString(R.Key,R.Value);
+					if(E.getValue().equals(""))
+					{
+						editor.remove(E.getKey());
+					}
+					else
+					{
+						editor.putString(E.getKey(),E.getValue());
+					}
 				}
+				Send_Receive(new Request(Integer.toString(selfnum),null,R),
+						Integer.parseInt(self.getReplica2().getEmulator())*2);
+				Send_Receive(new Request(Integer.toString(selfnum),null,R),
+						Integer.parseInt(self.getReplica2().getReplica1().getEmulator())*2);
+
 			}else {
 				SharedPreferences.Editor temp=fail_recovery.edit();
 				temp.putString("fail","");
@@ -539,6 +570,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Send(new Request(key, null, DT),
 									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
 							Pendings.add(clientSocket);
+							Backup.putString(key,"");
 						}
 						else
 						{
@@ -547,6 +579,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Send(new Request(key, null, FDM),
 									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
 							Pendings.add(clientSocket);
+							Backup.putString(key,"");
 						}
 					}
 					else if(flag==DM){
@@ -676,14 +709,43 @@ public class SimpleDynamoProvider extends ContentProvider {
 						Backup.clear();
 						Backup.commit();
 						nofail=true;
-						self.getCoordinator().getReplica1().setFailed(true);
+						self.getCoordinator().getReplica1().setFailed(false);
 					}
 					else if(flag==RM)
 					{
+						Backup.commit();
+						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+						out.writeObject(back_up.getAll().entrySet());
+						out.close();
+						clientSocket.close();
 
+						Backup.clear();
+						Backup.commit();
+						nofail=true;
+						self.getReplica1().setFailed(false);
 					}
 					else if(flag==RT)
-					{}
+					{
+						Backup.commit();
+						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+						out.writeObject(back_up.getAll().entrySet());
+						out.close();
+						clientSocket.close();
+
+						Backup.clear();
+						Backup.commit();
+						nofail=true;
+						self.getReplica2().setFailed(false);
+					}
+					else if(flag==R)
+					{
+						int i=Integer.parseInt(msg.Key);
+						Nodes.get(i).setFailed(false);
+						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+						out.writeObject(new Reply(null,null,true));
+						out.close();
+						clientSocket.close();
+					}
 				}
 			}catch (IOException e)
 			{
@@ -705,7 +767,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
 			out.writeObject(m);
 			out.flush();
-			//socket.setSoTimeout(1000);
+			socket.setSoTimeout(1500);
 			ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 			result = in.readObject();
 			in.close();
