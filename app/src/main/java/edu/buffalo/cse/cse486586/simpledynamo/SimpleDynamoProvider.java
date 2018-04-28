@@ -126,14 +126,17 @@ public class SimpleDynamoProvider extends ContentProvider {
 					Integer.parseInt(successor.getEmulator())*2);
 			if(!(reply instanceof Reply))
 			{
+				Log.d(TAG, "insert: Fail happend~~~~~~~~~~");
 				reply=Send_Receive(new Request(null,null,F),
 						Integer.parseInt(successor.getEmulator())*2);
 				if(reply instanceof Reply)
 				{
+					Log.d(TAG, "insert: Head-"+successor.getEmulator()+" not failed");
 					reply=Send_Receive(new Request(key,value,I),
 							Integer.parseInt(successor.getEmulator())*2);
 				}else
 				{
+					Log.d(TAG, "insert: Head-"+successor.getEmulator()+"failed");
 					successor.setFailed(true);
 				}
 			}
@@ -153,6 +156,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 				reply=Send_Receive(new Request(key,value,I),
 						Integer.parseInt(successor.getEmulator())*2);
 			}
+			Log.d(TAG, "insert: to second "+key+" finished\n");
 		}
 		return null;
 	}
@@ -205,8 +209,8 @@ public class SimpleDynamoProvider extends ContentProvider {
 			//e.printStackTrace();
 			return false;
 		}
-		Log.d(TAG, "onCreate: finished ----------------------------------\n");
-		Log.d(TAG, "onCreate: Self is "+self.getEmulator());
+		/*Log.d(TAG, "onCreate: finished ---------------------------------------------------------------------");
+		Log.d(TAG, "onCreate: Self is "+self.getEmulator());*/
 		return false;
 	}
 
@@ -421,55 +425,56 @@ public class SimpleDynamoProvider extends ContentProvider {
 			if(fail_recovery.contains("fail"))
 			{
 				editor.clear();
-				Set<Map.Entry<String,String>> data=(Set<Map.Entry<String,String>>) Send_Receive(new Request(null,null,RT),
+				ArrayList<Reply> data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RT),
 						Integer.parseInt(self.getCoordinator().getEmulator())*2);
-				for(Map.Entry<String,String> E:data)
+				for(Reply E:data)
 				{
-					if(E.getValue().equals(""))
+					if(E.Value.equals(""))
 					{
-						editor.remove(E.getKey());
+						editor.remove(E.Key);
 					}
 					else
 					{
-						editor.putString(E.getKey(),E.getValue());
+						editor.putString(E.Key,E.Value);
 					}
 				}
-				data=(Set<Map.Entry<String,String>>) Send_Receive(new Request(null,null,RM),
+				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RM),
 						Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
-				for(Map.Entry<String,String> E:data)
+				for(Reply E:data)
 				{
-					if(E.getValue().equals(""))
+					if(E.Value.equals(""))
 					{
-						editor.remove(E.getKey());
+						editor.remove(E.Key);
 					}
 					else
 					{
-						editor.putString(E.getKey(),E.getValue());
+						editor.putString(E.Key,E.Value);
 					}
 				}
-				data=(Set<Map.Entry<String,String>>) Send_Receive(new Request(null,null,RH),
+				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RH),
 						Integer.parseInt(self.getReplica1().getEmulator())*2);
-				for(Map.Entry<String,String> E:data)
+				for(Reply E:data)
 				{
-					if(E.getValue().equals(""))
+					if(E.Value.equals(""))
 					{
-						editor.remove(E.getKey());
+						editor.remove(E.Key);
 					}
 					else
 					{
-						editor.putString(E.getKey(),E.getValue());
+						editor.putString(E.Key,E.Value);
 					}
 				}
 				Send_Receive(new Request(Integer.toString(selfnum),null,R),
 						Integer.parseInt(self.getReplica2().getEmulator())*2);
 				Send_Receive(new Request(Integer.toString(selfnum),null,R),
 						Integer.parseInt(self.getReplica2().getReplica1().getEmulator())*2);
-
+				editor.commit();
+				Log.d(TAG, "doInBackground: Recovery and get the data");
 			}else {
 				SharedPreferences.Editor temp=fail_recovery.edit();
 				temp.putString("fail","");
 				temp.commit();
-				Log.d(TAG, "doInBackground: Begin-------------------");
+				Log.d(TAG, "doInBackground:First Begin***************************************");
 			}
             /*
              * TODO: Fill in your server code that receives messages and passes them
@@ -506,8 +511,8 @@ public class SimpleDynamoProvider extends ContentProvider {
 					else if(flag==I)
 					{
 						if(!self.getReplica1().isFailed()&&!self.getReplica2().isFailed()) {
-							Log.d(TAG, "doInBackground: Insert head " + key);
-							Log.d(TAG, "doInBackground: The size of Pending queue before adding is " + Pendings.size());
+							//Log.d(TAG, "doInBackground: Insert head " + key);
+							//Log.d(TAG, "doInBackground: The size of Pending queue before adding is " + Pendings.size());
 							editor.putString(key, msg.Value);
 							editor.commit();
 							Send(new Request(key, msg.Value, IM),
@@ -521,6 +526,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Send(new Request(key, msg.Value, IT),
 									Integer.parseInt(self.getReplica2().getEmulator()) * 2);
 							Pendings.add(clientSocket);
+							Backup.putString(key,msg.Value);
 						}
 						else
 						{
@@ -529,6 +535,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Send(new Request(key, msg.Value, FIM),
 									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
 							Pendings.add(clientSocket);
+							Backup.putString(key,msg.Value);
 						}
 					}
 					else if(flag==IM)
@@ -541,7 +548,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag==IT)
 					{
-						Log.d(TAG, "doInBackground: Insert tail "+key);
+						//Log.d(TAG, "doInBackground: Insert tail "+key);
 						editor.putString(key,msg.Value);
 						editor.commit();
 						Send(new Request(key,null,OK),
@@ -701,8 +708,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 					else if(flag==RH)
 					{
 						Backup.commit();
+						ArrayList<Reply> replies=new ArrayList<Reply>();
+						Map<String,String> data=(Map<String, String>) back_up.getAll();
+						for(Map.Entry<String,String> E:data.entrySet())
+						{
+							replies.add(new Reply(E.getKey(),E.getValue(),true));
+						}
 						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
-						out.writeObject(back_up.getAll().entrySet());
+						out.writeObject(replies);
 						out.close();
 						clientSocket.close();
 
@@ -714,8 +727,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 					else if(flag==RM)
 					{
 						Backup.commit();
+						ArrayList<Reply> replies=new ArrayList<Reply>();
+						Map<String,String> data=(Map<String, String>) back_up.getAll();
+						for(Map.Entry<String,String> E:data.entrySet())
+						{
+							replies.add(new Reply(E.getKey(),E.getValue(),true));
+						}
 						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
-						out.writeObject(back_up.getAll().entrySet());
+						out.writeObject(replies);
 						out.close();
 						clientSocket.close();
 
@@ -727,8 +746,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 					else if(flag==RT)
 					{
 						Backup.commit();
+						ArrayList<Reply> replies=new ArrayList<Reply>();
+						Map<String,String> data=(Map<String, String>) back_up.getAll();
+						for(Map.Entry<String,String> E:data.entrySet())
+						{
+							replies.add(new Reply(E.getKey(),E.getValue(),true));
+						}
 						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
-						out.writeObject(back_up.getAll().entrySet());
+						out.writeObject(replies);
 						out.close();
 						clientSocket.close();
 
@@ -767,7 +792,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
 			out.writeObject(m);
 			out.flush();
-			socket.setSoTimeout(1500);
+			socket.setSoTimeout(2000);
 			ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 			result = in.readObject();
 			in.close();
@@ -775,8 +800,8 @@ public class SimpleDynamoProvider extends ContentProvider {
 			socket.close();
 		} catch (Exception e)
 		{
-			Log.e(TAG, "Send_Receive: ",e );
-			return result;
+			//Log.d(TAG, "Send_Receive: detect failures "+ e.getClass().getSimpleName());
+			return null;
 		}
 		return result;
 	}
@@ -790,7 +815,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			socket.close();
 		}catch (Exception e)
 		{
-			Log.e(TAG, "Send: ",e );
+			//Log.d(TAG, "Send: "+e.getClass().getSimpleName());
 		}
 	}
 }
