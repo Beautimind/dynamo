@@ -46,8 +46,9 @@ public class SimpleDynamoProvider extends ContentProvider {
 	SharedPreferences data;
 	SharedPreferences fail_recovery;
 	SharedPreferences back_up;
-	private boolean nofail;
+	private boolean nofail=true;
 	private static LinkedList<Socket> Pendings=new LinkedList<Socket>();
+	private static LinkedList<Socket> failPendings=new LinkedList<Socket>();
 	private int max=0;
 	//all flag
 	private final int Q=0;
@@ -411,6 +412,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		protected Void doInBackground(ServerSocket... sockets) {
 			ServerSocket serverSocket = sockets[0];
 			SharedPreferences.Editor editor=data.edit();
+			SharedPreferences.Editor Backup=back_up.edit();
 			if(fail_recovery.contains("fail"))
 			{
 				editor.clear();
@@ -482,9 +484,21 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Pendings.add(clientSocket);
 						}
 						else if(self.getReplica1().isFailed())
-						{}
+						{
+							editor.putString(key, msg.Value);
+							editor.commit();
+							Send(new Request(key, msg.Value, IT),
+									Integer.parseInt(self.getReplica2().getEmulator()) * 2);
+							Pendings.add(clientSocket);
+						}
 						else
-						{}
+						{
+							editor.putString(key, msg.Value);
+							editor.commit();
+							Send(new Request(key, msg.Value, FIM),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							Pendings.add(clientSocket);
+						}
 					}
 					else if(flag==IM)
 					{
@@ -518,10 +532,22 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Send(new Request(key, null, DM),
 									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
 							Pendings.add(clientSocket);
-						}else if(self.getReplica2().isFailed())
-						{}
+						}else if(self.getReplica1().isFailed())
+						{
+							editor.remove(key);
+							editor.commit();
+							Send(new Request(key, null, DT),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							Pendings.add(clientSocket);
+						}
 						else
-						{}
+						{
+							editor.remove(key);
+							editor.commit();
+							Send(new Request(key, null, FDM),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							Pendings.add(clientSocket);
+						}
 					}
 					else if(flag==DM){
 						editor.remove(key);
@@ -538,28 +564,124 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if (flag==F)
 					{
-
+						if(nofail) {
+							Pendings.clear();
+							Object reply = Send_Receive(new Request(null, null, FR),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							if (!(reply instanceof Reply)) {
+								self.getReplica1().setFailed(true);
+							} else {
+								self.getReplica2().setFailed(true);
+							}
+							ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
+							out.writeObject(new Reply(null, null, true));
+							out.close();
+							clientSocket.close();
+							nofail=false;
+						}
+						else{
+							ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
+							out.writeObject(new Reply(null, null, true));
+							out.close();
+							clientSocket.close();
+						}
 					}
 					else if(flag==FR)
-					{}
+					{
+						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+						out.writeObject(new Reply(null,null,true));
+						out.close();
+						clientSocket.close();
+					}
 					else if(flag==FI)
-					{}
+					{
+						if(!nofail) {
+							editor.putString(key, msg.Value);
+							editor.commit();
+							Backup.putString(key,msg.Value);
+							Send(new Request(key, msg.Value, FIT),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							failPendings.add(clientSocket);
+						}else
+						{
+							ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+							out.writeObject(new Reply(null,null,false));
+							out.close();
+							clientSocket.close();
+						}
+					}
 					else if(flag==FIM)
-					{}
+					{
+						//this is the message of tail node failure
+						editor.putString(key,msg.Value);
+						editor.commit();
+						Send(new Request(null,null,OK),
+								Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
+					}
 					else if(flag==FIT)
-					{}
+					{
+						editor.putString(key,msg.Value);
+						editor.commit();
+						Send(new Request(null,null,FOK),
+								Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
+					}
 					else if(flag==FD)
-					{}
+					{
+						if(!nofail) {
+							editor.remove(key);
+							editor.commit();
+							Backup.putString(key,"");
+							Send(new Request(key, msg.Value, FDT),
+									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+							failPendings.add(clientSocket);
+						}else
+						{
+							ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+							out.writeObject(new Reply(null,null,false));
+							out.close();
+							clientSocket.close();
+						}
+					}
 					else if(flag==FDM)
-					{}
+					{
+						//handle tail node fail
+						editor.remove(key);
+						editor.commit();
+						Send(new Request(null,null,OK),
+								Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
+					}
 					else if(flag==FDT)
-					{}
+					{
+						editor.remove(key);
+						editor.commit();
+						Send(new Request(null,null,FOK),
+								Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
+					}
 					else if(flag==FOK)
-					{}
+					{
+						Socket socket=failPendings.poll();
+						ObjectOutputStream out=new ObjectOutputStream(socket.getOutputStream());
+						out.writeObject(new Reply(null,null,true));
+						out.close();
+						socket.close();
+					}
 					else if(flag==RH)
-					{}
+					{
+						Backup.commit();
+						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
+						out.writeObject(back_up.getAll().entrySet());
+						out.close();
+						clientSocket.close();
+
+						Backup.clear();
+						Backup.commit();
+						nofail=true;
+						self.getCoordinator().getReplica1().setFailed(true);
+					}
 					else if(flag==RM)
-					{}
+					{
+
+					}
 					else if(flag==RT)
 					{}
 				}
