@@ -8,6 +8,7 @@ import java.io.Serializable;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.security.Key;
 import java.security.MessageDigest;
@@ -48,6 +49,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 	SharedPreferences fail_recovery;
 	SharedPreferences back_up;
 	private boolean nofail=true;
+	private boolean notified=false;
 	private static LinkedList<Socket> Pendings=new LinkedList<Socket>();
 	private static LinkedList<Socket> failPendings=new LinkedList<Socket>();
 	private int selfnum=0;
@@ -95,6 +97,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 					successor.setFailed(true);
 					reply=Send_Receive(new Request(selection,null,FB),
 							Integer.parseInt(successor.getReplica1().getEmulator())*2);
+					notified=true;
 					reply=Send_Receive(new Request(selection,null,FD),
 							Integer.parseInt(successor.getReplica1().getEmulator())*2);
 					if(reply instanceof Reply&&!((Reply) reply).Success)
@@ -113,6 +116,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 		else
 		{
 			//handle failure here
+			if(!notified)
+			{
+				Send_Receive(new Request(selection,null,FB),
+						Integer.parseInt(successor.getReplica1().getEmulator())*2);
+			}
 			Object reply=Send_Receive(new Request(selection,null,FD),
 					Integer.parseInt(successor.getReplica1().getEmulator())*2);
 			if(reply instanceof Reply&&!((Reply) reply).Success)
@@ -162,6 +170,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 					successor.setFailed(true);
 					reply=Send_Receive(new Request(null,null,FB),
 							Integer.parseInt(successor.getReplica1().getEmulator())*2);
+					notified=true;
 					//transfer the data
 					reply=Send_Receive(new Request(key,value,FI),
 							Integer.parseInt(successor.getReplica1().getEmulator())*2);
@@ -183,6 +192,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 		{
 			Log.d(TAG, "insert: "+key+" to "+successor.getEmulator()+" with failure");
 			//handle failure
+			if(!notified)
+			{
+				Send_Receive(new Request(null,null,FB),
+						Integer.parseInt(successor.getReplica1().getEmulator())*2);
+			}
 			Object reply=Send_Receive(new Request(key,value,FI),
 					Integer.parseInt(successor.getReplica1().getEmulator())*2);
 			if(reply instanceof Reply&&!((Reply) reply).Success)
@@ -287,7 +301,9 @@ public class SimpleDynamoProvider extends ContentProvider {
 		else {
 			Node successor=findSuccessor(selection,Nodes);
 			Reply reply=(Reply)queryDynamo(successor,selection);
-			Log.d(TAG, "query: "+selection+" finished");
+			if(reply.Value==null) {
+				Log.d(TAG, "query: " + selection + " finished, get null!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" + reply.Value);
+			}
 			result.addRow(new Object[]{reply.Key,reply.Value});
 		}
 		return result;
@@ -297,6 +313,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 	{
 		Object result=null;
 		if(!successor.replica2.isFailed()) {
+			Log.d(TAG, "queryDynamo: send to third "+successor.getReplica1().getEmulator());
 			Object reply = Send_Receive(new Request(selection, null, Q),
 					Integer.parseInt(successor.getReplica2().getEmulator()) * 2);
 			if (!(reply instanceof Object)) {
@@ -308,6 +325,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 		}
 		if(successor.replica2.isFailed())
 		{
+			Log.d(TAG, "queryDynamo: send to second "+successor.getReplica2().getEmulator());
 			result=Send_Receive(new Request(selection,null,Q),
 					Integer.parseInt(successor.getReplica1().getEmulator())*2);
 		}
@@ -576,6 +594,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Pendings.add(clientSocket);
 							Backup.putString(key,msg.Value);
 						}
+						//Log.d(TAG, "doInBackground: Insert head "+key);
 					}
 					else if(flag==IM)
 					{
@@ -584,6 +603,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 						editor.commit();
 						Send(new Request(key,msg.Value,IT),
 								Integer.parseInt(self.getReplica1().getEmulator())*2);
+						//Log.d(TAG, "doInBackground: Insert middle "+key);
 					}
 					else if(flag==IT)
 					{
@@ -592,6 +612,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 						editor.commit();
 						Send(new Request(key,null,OK),
 								Integer.parseInt(self.getCoordinator().getEmulator())*2);
+						//Log.d(TAG, "doInBackground: Insert tail "+key);
 					}
 					else if(flag==OK)
 					{
@@ -653,8 +674,10 @@ public class SimpleDynamoProvider extends ContentProvider {
 									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
 							if (!(reply instanceof Reply)) {
 								self.getReplica1().setFailed(true);
+								Log.d(TAG, "doInBackground: fail detected "+self.getReplica1().getEmulator());
 							} else {
 								self.getReplica2().setFailed(true);
+								Log.d(TAG, "doInBackground: fail detected "+ self.getReplica2().getEmulator());
 							}
 							ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
 							out.writeObject(new Reply(null, null, true));
@@ -692,6 +715,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							out.close();
 							clientSocket.close();
 						}
+						Log.d(TAG, "doInBackground: rescieve fail insert head "+key);
 					}
 					else if(flag==FIM)
 					{
@@ -703,6 +727,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag==FIT)
 					{
+						Log.d(TAG, "doInBackground: recieve fail insert tail "+key);
 						editor.putString(key,msg.Value);
 						editor.commit();
 						Send(new Request(null,null,FOK),
@@ -766,6 +791,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 						Backup.clear();
 						Backup.commit();
 						nofail=true;
+						notified=false;
 						self.getCoordinator().getReplica1().setFailed(false);
 					}
 					else if(flag==RM)
@@ -786,6 +812,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 						Backup.clear();
 						Backup.commit();
 						nofail=true;
+						notified=false;
 						self.getReplica1().setFailed(false);
 					}
 					else if(flag==RT)
@@ -806,6 +833,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 						Backup.clear();
 						Backup.commit();
 						nofail=true;
+						notified=false;
 						self.getReplica2().setFailed(false);
 					}
 					else if(flag==R)
@@ -814,6 +842,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 						{
 							nofail=true;
 						}
+						notified=false;
 						int i=Integer.parseInt(msg.Key);
 						Nodes.get(i).setFailed(false);
 						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
@@ -856,10 +885,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 			in.close();
 			out.close();
 			socket.close();
-		} catch (Exception e)
+		} catch (SocketTimeoutException e)
 		{
 			//Log.d(TAG, "Send_Receive: detect failures "+ e.getClass().getSimpleName());
 			return null;
+		}catch (Exception e1)
+		{
+			Log.d(TAG, "Send_Receive: message "+m.Key+"/"+m.Value+"/"+m.Flag);
+			Log.e(TAG, "Send_Receive: ",e1 );
 		}
 		return result;
 	}
