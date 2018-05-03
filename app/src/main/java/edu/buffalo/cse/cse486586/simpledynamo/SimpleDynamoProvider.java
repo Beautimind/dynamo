@@ -571,6 +571,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 				Log.d(TAG, "doInBackground: Recover begin ~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
 				ArrayList<Reply> data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RT),
 						Integer.parseInt(self.getCoordinator().getEmulator())*2);
+				while(data==null)
+				{
+					data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RT),
+							Integer.parseInt(self.getCoordinator().getEmulator())*2);
+				}
 				for(Reply E:data)
 				{
 					if(E.Value.equals(""))
@@ -585,6 +590,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 				}
 				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RM),
 						Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
+				while(data==null)
+				{
+					data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RM),
+							Integer.parseInt(self.getCoordinator().getReplica1().getEmulator())*2);
+				}
 				for(Reply E:data)
 				{
 					if(E.Value.equals(""))
@@ -599,6 +609,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 				}
 				data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RH),
 						Integer.parseInt(self.getReplica1().getEmulator())*2);
+				while(data==null)
+				{
+					data=(ArrayList<Reply>) Send_Receive(new Request(null,null,RH),
+							Integer.parseInt(self.getReplica1().getEmulator())*2);
+				}
 				for(Reply E:data)
 				{
 					if(E.Value.equals(""))
@@ -611,8 +626,13 @@ public class SimpleDynamoProvider extends ContentProvider {
 						Log.d(TAG, "doInBackground: get missing tail "+ E.Key);
 					}
 				}
-				Send_Receive(new Request(Integer.toString(selfnum),null,R),
+				Reply p=(Reply) Send_Receive(new Request(Integer.toString(selfnum),null,R),
 						Integer.parseInt(self.getReplica2().getEmulator())*2);
+				while(p==null)
+				{
+					p=(Reply) Send_Receive(new Request(Integer.toString(selfnum),null,R),
+						Integer.parseInt(self.getReplica2().getEmulator())*2);
+				}
 				editor.commit();
 				Log.d(TAG, "doInBackground: Recovery finish~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
 			}else {
@@ -970,20 +990,29 @@ public class SimpleDynamoProvider extends ContentProvider {
 					}
 					else if(flag==FB)
 					{
-						Object reply = Send_Receive(new Request(null, null, FR),
-								Integer.parseInt(self.getCoordinator().getReplica1().getEmulator()) * 2);
-						if(!(reply instanceof Reply)) {
-							nofail = false;
+						if(nofail) {
+							Object reply = Send_Receive(new Request(null, null, FR),
+									Integer.parseInt(self.getCoordinator().getReplica1().getEmulator()) * 2);
+							if (!(reply instanceof Reply)) {
+								nofail = false;
+								failPendings.clear();
+							}
+							ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
+							if (nofail == false) {
+								out.writeObject(new Reply(null, null, true));
+							} else {
+								out.writeObject(new Reply(null, null, false));
+							}
+							out.close();
+							clientSocket.close();
 						}
-						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
-						if(nofail==false) {
-							out.writeObject(new Reply(null, null, true));
-						}else
+						else
 						{
-							out.writeObject(new Reply(null,null,false));
+							ObjectOutputStream out = new ObjectOutputStream(clientSocket.getOutputStream());
+							out.writeObject(new Reply(null, null, true));
+							out.close();
+							clientSocket.close();
 						}
-						out.close();
-						clientSocket.close();
 					}
 				}
 			}catch (IOException e)
