@@ -276,6 +276,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			Nodes.add(new Node(Integer.toString(i)));
 		}
 		selfnum=0;
+		Collections.sort(Nodes);
 		for(Node i:Nodes)
 		{
 			if(i.getEmulator().compareTo(myPortString)==0)
@@ -285,8 +286,6 @@ public class SimpleDynamoProvider extends ContentProvider {
 			}
 			selfnum++;
 		}
-		Collections.sort(Nodes);
-
 		int i;
 		for(i=0;i<Nodes.size()-2;i++)
 		{
@@ -1035,7 +1034,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
 			out.writeObject(m);
 			out.flush();
-			socket.setSoTimeout(2000);
+			socket.setSoTimeout(1500);
 			ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 			result = in.readObject();
 			in.close();
