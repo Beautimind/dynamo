@@ -850,9 +850,15 @@ public class SimpleDynamoProvider extends ContentProvider {
 						out.close();
 						clientSocket.close();
 
+						if(nofail)
+						{
+							Pendings.clear();
+						}else
+						{
+							nofail=true;
+						}
 						Backup.clear();
 						Backup.commit();
-						nofail=true;
 						self.getReplica1().setFailed(false);
 						self.getReplica1().setIDfailed(false);
 						self.getReplica1().setQfailed(false);
@@ -873,9 +879,15 @@ public class SimpleDynamoProvider extends ContentProvider {
 						out.close();
 						clientSocket.close();
 
+						if(nofail)
+						{
+							Pendings.clear();
+						}else
+						{
+							nofail=true;
+						}
 						Backup.clear();
 						Backup.commit();
-						nofail=true;
 						self.getReplica2().setFailed(false);
 						self.getReplica2().setIDfailed(false);
 						self.getReplica2().setQfailed(false);
