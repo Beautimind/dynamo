@@ -159,18 +159,23 @@ public class SimpleDynamoProvider extends ContentProvider {
 				}else
 				{
 					Log.d(TAG, "insert: head failed try the next");
-					successor.setIDfailed(true);
 					reply=Send_Receive(new Request(null,null,FB),
 							Integer.parseInt(successor.getReplica1().getEmulator())*2);
 					//transfer the data
-					reply=Send_Receive(new Request(key,value,FI),
-							Integer.parseInt(successor.getReplica1().getEmulator())*2);
-					if(reply instanceof Reply&&!((Reply) reply).Success)
+					if(reply instanceof Reply&&((Reply) reply).Success) {
+						successor.setIDfailed(true);
+						reply = Send_Receive(new Request(key, value, FI),
+								Integer.parseInt(successor.getReplica1().getEmulator()) * 2);
+						if (reply instanceof Reply && !((Reply) reply).Success) {
+							successor.setIDfailed(false);
+							reply = Send_Receive(new Request(key, value, I),
+									Integer.parseInt(successor.getEmulator()) * 2);
+							Log.d(TAG, "insert: detect recovery");
+						}
+					}else
 					{
-						successor.setIDfailed(false);
-						reply=Send_Receive(new Request(key,value,I),
+						 reply=Send_Receive(new Request(key,value,I),
 								Integer.parseInt(successor.getEmulator())*2);
-						Log.d(TAG, "insert: detect recovery");
 					}
 				}
 			}
@@ -199,6 +204,61 @@ public class SimpleDynamoProvider extends ContentProvider {
 		return null;
 	}
 
+
+	void InsertDynamo(Node successor,String key,String value)
+	{
+		if(!successor.IDfailed())
+		{
+			Log.d(TAG, "insert: "+key+" to "+successor.getEmulator()+" begin without failure");
+			Object reply=Send_Receive(new Request(key,value,I),
+					Integer.parseInt(successor.getEmulator())*2);
+			if(!(reply instanceof Reply))
+			{
+				Log.d(TAG, "insert: failure happened------------------------------------------------------------------");
+				reply=Send_Receive(new Request(null,null,F),
+						Integer.parseInt(successor.getEmulator())*2);
+				if(reply instanceof Reply)
+				{
+					Log.d(TAG, "insert: head not fail resend");
+					reply=Send_Receive(new Request(key,value,I),
+							Integer.parseInt(successor.getEmulator())*2);
+				}else
+				{
+					Log.d(TAG, "insert: head failed try the next");
+					reply=Send_Receive(new Request(null,null,FB),
+							Integer.parseInt(successor.getReplica1().getEmulator())*2);
+					//transfer the data
+					if((reply instanceof Reply)&&((Reply) reply).Success==true)
+					{
+						successor.setIDfailed(true);
+					}else
+					{
+						InsertDynamo(successor,key,value);
+					}
+				}
+			}
+			if(((Reply)reply).Success)
+			{
+				Log.d(TAG, "insert: "+key+" finished\n");
+			}
+		}
+		else
+		{
+			Log.d(TAG, "insert: "+key+" to "+successor.getEmulator()+" with failure");
+			//handle failure
+			Object reply=Send_Receive(new Request(key,value,FI),
+					Integer.parseInt(successor.getReplica1().getEmulator())*2);
+			if(reply instanceof Reply&&!((Reply) reply).Success)
+			{
+				successor.setIDfailed(false);
+				InsertDynamo(successor,key,value);
+			}
+			if(reply instanceof Reply&&((Reply) reply).Success)
+			{
+				Log.d(TAG, "insert: "+key+" finished");
+			}
+		}
+	}
 	@Override
 	public boolean onCreate() {
 		// TODO Auto-generated method stub
@@ -916,7 +976,12 @@ public class SimpleDynamoProvider extends ContentProvider {
 							nofail = false;
 						}
 						ObjectOutputStream out=new ObjectOutputStream(clientSocket.getOutputStream());
-						out.writeObject(new Reply(null,null,true));
+						if(nofail==false) {
+							out.writeObject(new Reply(null, null, true));
+						}else
+						{
+							out.writeObject(new Reply(null,null,false));
+						}
 						out.close();
 						clientSocket.close();
 					}
