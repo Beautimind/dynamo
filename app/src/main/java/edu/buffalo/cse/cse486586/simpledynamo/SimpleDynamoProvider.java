@@ -309,6 +309,11 @@ public class SimpleDynamoProvider extends ContentProvider {
 				successor.replica2.setQfailed(true);
 				result=Send_Receive(new Request(selection,null,Q),
 						Integer.parseInt(successor.getReplica1().getEmulator())*2);
+				if(result==null)
+				{
+					successor.replica2.setQfailed(false);
+					result=queryDynamo(successor,selection);
+				}
 			}else
 			{
 				result=reply;
@@ -316,9 +321,19 @@ public class SimpleDynamoProvider extends ContentProvider {
 		}
 		else
 		{
-			//Log.d(TAG, "queryDynamo: send to second "+successor.getReplica2().getEmulator());
+			Log.d(TAG, "queryDynamo: send to second "+successor.getReplica2().getEmulator());
 			result=Send_Receive(new Request(selection,null,Q),
 					Integer.parseInt(successor.getReplica1().getEmulator())*2);
+			if(result==null)
+			{
+				successor.replica2.setQfailed(false);
+				result=queryDynamo(successor,selection);
+			}
+		}
+		if(result==null)
+		{
+			Log.d(TAG, "queryDynamo: failure happened,get null!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+
 		}
 		return result;
 	}
@@ -845,7 +860,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 					else if(flag==RT)
 					{
 						Log.d(TAG, "doInBackground: Recieve recover tail-------------------------------------");
-						Log.d(TAG, "doInBackground: The size of Pending is "+Pendings.size());
+						//Log.d(TAG, "doInBackground: The size of Pending is "+Pendings.size());
 						Backup.commit();
 						ArrayList<Reply> replies=new ArrayList<Reply>();
 						Map<String,String> data=(Map<String, String>) back_up.getAll();
