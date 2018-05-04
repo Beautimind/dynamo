@@ -143,22 +143,22 @@ public class SimpleDynamoProvider extends ContentProvider {
 		Node successor=findSuccessor(key,Nodes);
 		if(!successor.IDfailed())
 		{
-			Log.d(TAG, "insert: "+key+" to "+successor.getEmulator()+" begin without failure");
+			//Log.d(TAG, "insert: "+key+" to "+successor.getEmulator()+" begin without failure");
 			Object reply=Send_Receive(new Request(key,value,I),
 					Integer.parseInt(successor.getEmulator())*2);
 			if(!(reply instanceof Reply))
 			{
-				Log.d(TAG, "insert: failure happened------------------------------------------------------------------");
+				//Log.d(TAG, "insert: failure happened------------------------------------------------------------------");
 				reply=Send_Receive(new Request(null,null,F),
 						Integer.parseInt(successor.getEmulator())*2);
 				if(reply instanceof Reply)
 				{
-					Log.d(TAG, "insert: head not fail resend");
+					//Log.d(TAG, "insert: head not fail resend");
 					reply=Send_Receive(new Request(key,value,I),
 							Integer.parseInt(successor.getEmulator())*2);
 				}else
 				{
-					Log.d(TAG, "insert: head failed try the next");
+					//Log.d(TAG, "insert: head failed try the next");
 					reply=Send_Receive(new Request(null,null,FB),
 							Integer.parseInt(successor.getReplica1().getEmulator())*2);
 					//transfer the data
@@ -170,7 +170,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							successor.setIDfailed(false);
 							reply = Send_Receive(new Request(key, value, I),
 									Integer.parseInt(successor.getEmulator()) * 2);
-							Log.d(TAG, "insert: detect recovery");
+							//Log.d(TAG, "insert: detect recovery");
 						}
 					}else
 					{
@@ -181,12 +181,12 @@ public class SimpleDynamoProvider extends ContentProvider {
 			}
 			if(((Reply)reply).Success)
 			{
-				Log.d(TAG, "insert: "+key+" finished\n");
+				//Log.d(TAG, "insert: "+key+" finished\n");
 			}
 		}
 		else
 		{
-			Log.d(TAG, "insert: "+key+" to "+successor.getEmulator()+" with failure");
+			//Log.d(TAG, "insert: "+key+" to "+successor.getEmulator()+" with failure");
 			//handle failure
 			Object reply=Send_Receive(new Request(key,value,FI),
 					Integer.parseInt(successor.getReplica1().getEmulator())*2);
@@ -198,7 +198,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 			}
 			if(reply instanceof Reply&&((Reply) reply).Success)
 			{
-				Log.d(TAG, "insert: "+key+" finished");
+				//Log.d(TAG, "insert: "+key+" finished");
 			}
 		}
 		return null;
@@ -329,10 +329,14 @@ public class SimpleDynamoProvider extends ContentProvider {
 			for(Node N:Nodes)
 			{
 				if(!(N.equals(self))) {
-					ArrayList<Reply> replies = (ArrayList<Reply>) queryDynamo(N.coordinator, selection);
+					//ArrayList<Reply> replies = (ArrayList<Reply>) queryDynamo(N.coordinator, selection);
+					ArrayList<Reply> replies = (ArrayList<Reply>)Send_Receive(new Request(selection,null,Q),
+							Integer.parseInt(N.getEmulator())*2);
 					//Log.d(TAG, "query: "+selection+" finished");
-					for (Reply R : replies) {
-						result.addRow(new Object[]{R.Key, R.Value});
+					if(replies!=null) {
+						for (Reply R : replies) {
+							result.addRow(new Object[]{R.Key, R.Value});
+						}
 					}
 				}else
 				{
@@ -732,10 +736,12 @@ public class SimpleDynamoProvider extends ContentProvider {
 						out.writeObject(new Reply(null,null,true));
 						out.close();
 						toReply.close();
+						Log.d(TAG, "doInBackground: receive Delete OK the size of Pending is "+Pendings.size());
 					}
 					else if(flag==D)
 					{
 						if(!self.getReplica1().isFailed()&&!self.getReplica2().isFailed()) {
+							Log.d(TAG, "doInBackground: receive delete normal "+key);
 							editor.remove(key);
 							editor.commit();
 							Send(new Request(key, null, DM),
@@ -743,15 +749,17 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Pendings.add(clientSocket);
 						}else if(self.getReplica1().isFailed())
 						{
+							Log.d(TAG, "doInBackground: recieve delete fail "+key);
 							editor.remove(key);
 							editor.commit();
 							Send(new Request(key, null, DT),
-									Integer.parseInt(self.getReplica1().getEmulator()) * 2);
+									Integer.parseInt(self.getReplica2().getEmulator()) * 2);
 							Pendings.add(clientSocket);
 							Backup.putString(key,"");
 						}
 						else
 						{
+							Log.d(TAG, "doInBackground: recieve delete fail "+key);
 							editor.remove(key);
 							editor.commit();
 							Send(new Request(key, null, FDM),
@@ -759,6 +767,7 @@ public class SimpleDynamoProvider extends ContentProvider {
 							Pendings.add(clientSocket);
 							Backup.putString(key,"");
 						}
+						Log.d(TAG, "doInBackground: The size of Pending "+Pendings.size());
 					}
 					else if(flag==DM){
 						editor.remove(key);
