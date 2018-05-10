@@ -732,10 +732,12 @@ public class SimpleDynamoProvider extends ContentProvider {
 					else if(flag==OK)
 					{
 						Socket toReply=Pendings.poll();
-						ObjectOutputStream out=new ObjectOutputStream(toReply.getOutputStream());
-						out.writeObject(new Reply(null,null,true));
-						out.close();
-						toReply.close();
+						if(toReply!=null) {
+							ObjectOutputStream out = new ObjectOutputStream(toReply.getOutputStream());
+							out.writeObject(new Reply(null, null, true));
+							out.close();
+							toReply.close();
+						}
 						Log.d(TAG, "doInBackground: receive Delete OK the size of Pending is "+Pendings.size());
 					}
 					else if(flag==D)
